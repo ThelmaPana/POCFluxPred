@@ -1,0 +1,273 @@
+---
+title: "Prepare POC flux and POC concentration data"
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+editor: visual
+cache: true
+---
+
+```{r set_up}
+#| output: false
+source("utils.R")
+```
+
+## Read sediment traps data
+
+### Read
+
+Read POC flux (mg/m²/d) data.
+
+```{r read_flux}
+# POC flux in mg/m²/day
+df_trap_raw <- read_delim("data/raw/POC_flux/GO_flux.tab", delim = "\t", escape_double = FALSE, trim_ws = TRUE, skip = 87, show_col_types = FALSE)
+# Select columns of interest and rename
+df_trap <- df_trap_raw %>%
+  select(
+    id_ref = `ID (Reference identifier)`,
+    id_loc = `ID (Unique location identifier)`,
+    type = `Type (Data type)`,
+    lon = Longitude,
+    lat = Latitude,
+    depth_trap = `Depth water [m] (Sediment trap deployment depth)`,
+    start_date = `Date/Time (Deployed)`,
+    end_date = `Date/time end (Retrieved)`,
+    duration = `Duration [days]`,
+    poc_flux = `POC flux [mg/m**2/day]`
+  ) %>%
+  # only sediment traps
+  filter(type == "sediment_trap") %>% 
+  # drop observations where poc_flux is missing
+  drop_na(poc_flux) %>%
+  # drop observations where start_date is missing
+  drop_na(start_date)
+```
+
+### Explore
+
+Map of number of observation per location.
+
+```{r flux_map}
+#| fig-column: body-outset
+#| out-width: 100%
+
+df_trap %>%
+  add_count(lon, lat) %>%
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = n)) +
+  scale_colour_viridis_c(trans = "log10") +
+  coord_quickmap(expand = 0)
+```
+
+Depth of sediment traps.
+
+```{r trap_depth}
+ggplot(df_trap) + geom_histogram(aes(x = depth_trap), binwidth = 100)
+```
+
+Temporal aspect: deployment start date and duration.
+
+```{r flux_time}
+ggplot(df_trap) + geom_histogram(aes(x = start_date), bins = 50)
+ggplot(df_trap) + 
+  geom_histogram(aes(x = duration), bins = 50) + 
+  scale_x_continuous(trans = "log10") + 
+  labs(x = "Deployment duration (d)")
+```
+
+Flux VS depth.
+
+```{r flux_depth}
+ggplot(df_trap) + geom_point(aes(x = depth_trap, y = poc_flux))
+```
+
+## Read POC concentration data
+
+Read POC concentration (mg/m³) data from [Sauzède et al., 2016](https://data.marine.copernicus.eu/product/MULTIOBS_GLO_BIO_BGC_3D_REP_015_010/description).
+
+### Read
+
+```{r read_poc}
+#| cache.lazy: false
+# List NC files to read
+files <- list.files("data/raw/soca/", full.names = TRUE)
+
+# Open one file to get dims
+nc <- nc_open(files[1])
+lon <- ncvar_get(nc, "longitude")
+lat <- ncvar_get(nc, "latitude")
+depth <- ncvar_get(nc, "depth")
+nc_close(nc)
+
+# Prepare storage for 12 months
+poc_mo <- array(NA, c(length(lon), length(lat), length(depth), 12))
+# Read all files
+for(i in 1:12) {
+  # get relevant files
+  file <- files[i]
+  # open the file and read the data in it
+  nc <- nc_open(file)
+  poc_mo[,,,i] <- ncvar_get(nc, "poc")
+  nc_close(nc)
+}
+```
+
+### Explore
+
+Plot surface POC in January and July.
+
+```{r plot_surf}
+#| fig-column: body-outset
+#| out-width: 100%
+
+image(poc_mo[,,1,1], col = cmocean("matter")(100), main = "Surface, January")
+image(poc_mo[,,1,7], col = cmocean("matter")(100), main = "Surface, July")
+```
+
+## Match POC flux with POC  concentration profiles
+
+### Round coordinates
+
+First, we need to round coordinates of POC  flux data to match the grid (0.25°) of the POC concentration data.
+
+```{r round_flux_coord}
+# Match coordinates
+df_trap <- df_trap %>%
+  mutate(
+    # floor longitude at 0.25 and add 0.125
+    lon = roundp(lon, precision = 0.25, f = floor) + 0.125,
+    # floor latitude at 0.25 and add 0.125
+    lat = roundp(lat, precision = 0.25, f = floor) + 0.125
+  )
+```
+
+### Match months
+
+Sediment traps can be deployed for several months, so let’s average POC concentration profiles over the corresponding months of each deployment.
+
+::: callout-note
+## To Do
+
+-   consider applying a rule to include / exclude months (e.g. a deployment starting on 30/10 and ending on 21/11, then it makes no sense to include October)
+
+-   consider a weighted average based on the number of days included in each month
+:::
+
+Get corresponding months for each deployment.
+
+```{r list_months}
+df_trap <- df_trap %>% 
+  mutate(
+    start_month = month(start_date), # beginning month
+    end_month = month(end_date) # end month
+  ) %>% 
+  rowwise() %>% 
+  mutate(months = list(seq(start_month, end_month))) %>% # list of months for each deployment
+  ungroup()
+```
+
+Average POC  concentration data over corresponding months for each  POC  flux observation.
+
+```{r avg_poc_months}
+df_all <- pbmclapply(1:nrow(df_trap), function(i) {
+  # Get line
+  l <- df_trap %>% slice(i)
+  # Get months to extract
+  months_i <- unlist(l$months)
+  # Get lon and lat
+  lon_i <- l$lon
+  lat_i <- l$lat
+  
+  # Get corresponding lon, lat and month in POC array
+  poc_i <- poc_mo[which(lon == lon_i), which(lat == lat_i), , months_i]
+  
+  
+  # If POC data was found, carry on
+  if (length(poc_i) > 0){
+  
+    # Average over months if needed
+    if (length(months_i) > 1) {
+      poc_i <- apply(poc_i, 1, mean)
+    }
+    
+    # Convert to dataframe and reshape to have one depth per column
+    poc_i <- tibble(
+      depth = depth,
+      poc = poc_i
+    ) %>% 
+      mutate(depth = paste0("poc_", depth)) %>% 
+      pivot_wider(names_from = depth, values_from = poc)
+    
+    # Join with POC flux data
+    l %>% 
+      select(lon, lat, poc_flux, depth_trap) %>% # keep only lon, lat, depth and poc_flux
+      bind_cols(poc_i)
+}}, mc.cores = 8
+) %>% 
+  bind_rows()
+summary(df_all %>% select(lon:poc_0))
+```
+
+Some POC flux observations could not be matched. Let’s drop them.
+
+::: callout-note
+## To Do
+
+-   consider less strict matching rules to get more data
+:::
+
+```{r drop_miss}
+df_all <- df_all %>% drop_na()
+```
+
+### Explore dataset
+
+Our dataset is ready, we have `r nrow(df_all)` observations. Let’s do a quick exploration.
+
+```{r dataset_exp}
+#| fig-column: body-outset
+#| out-width: 100%
+
+## POC flux values
+ggplot(df_all) + geom_histogram(aes(x = poc_flux))
+# Let’s try a log-transformation
+ggplot(df_all) + geom_histogram(aes(x = poc_flux)) + scale_x_continuous(trans = "log10")
+# Looks good, we’ll use this!
+
+## Various maps
+df_all %>% 
+  mutate(depth_bin = cut(depth_trap,  breaks = c(0, 1000, 6000))) %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = poc_flux)) +
+  scale_colour_viridis_c(trans = "log1p") +
+  facet_wrap(~depth_bin, ncol = 1) +
+  coord_quickmap(expand = 0)
+
+df_all %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = poc_flux, alpha = depth_trap)) +
+  scale_colour_viridis_c(trans = "log1p") +
+  coord_quickmap(expand = 0)
+
+df_all %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = poc_flux, size = depth_trap), shape = 1) +
+  scale_colour_viridis_c(trans = "log1p") +
+  scale_size_continuous(range = c(0.5, 4), breaks = c(1000, 3000, 5000)) +
+  coord_quickmap(expand = 0)
+```
+
+## Save
+
+Save our dataset.
+
+```{r save}
+save(df_all, file = "data/00.df_all.Rdata")
+```

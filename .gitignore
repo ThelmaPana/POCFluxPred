@@ -53,3 +53,7 @@ draft*
 
 # Data
 data/
+
+# Quarto cache
+*_cache
+*_files
