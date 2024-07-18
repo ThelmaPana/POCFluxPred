@@ -9,6 +9,9 @@ library(ncdf4)
 library(parallel)
 library(pbmcapply)
 library(cmocean)
+library(Hmisc)
+library(abind)
+library(ggtext)
 
 
 ## World map ----
@@ -23,3 +26,5 @@ n_cores <- 8
 
 # GGplot theme
 theme_set(theme_minimal())
+
+seed <- 12
