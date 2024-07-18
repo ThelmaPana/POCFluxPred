@@ -257,6 +257,22 @@
       ],
       "Hash": "d7e13f49c19103ece9e58ad2d83a7354"
     },
+    "castr": {
+      "Package": "castr",
+      "Version": "0.1.0",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteRepo": "castr",
+      "RemoteUsername": "jiho",
+      "RemoteRef": "HEAD",
+      "RemoteSha": "7c5667b8308b19fbe33e4517c312b9acc12b5ba9",
+      "Requirements": [
+        "R",
+        "stats"
+      ],
+      "Hash": "2e58f1073ff1da35710e082e6e3a61d9"
+    },
     "cellranger": {
       "Package": "cellranger",
       "Version": "1.1.0",
@@ -318,6 +334,17 @@
         "vctrs"
       ],
       "Hash": "3d8a84cdf9f6f8564531c49b70f3833d"
+    },
+    "cmocean": {
+      "Package": "cmocean",
+      "Version": "0.3-1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "grDevices"
+      ],
+      "Hash": "266ade1cfa96f0678c7576c9df040f01"
     },
     "codetools": {
       "Package": "codetools",
@@ -1224,6 +1251,13 @@
       ],
       "Hash": "4fd8900853b746af55b81fda99da7695"
     },
+    "ncdf4": {
+      "Package": "ncdf4",
+      "Version": "1.22",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "004b5219ae6d8ff53a3dcd2c89e56139"
+    },
     "nlme": {
       "Package": "nlme",
       "Version": "3.1-163",
@@ -1328,6 +1362,17 @@
         "utils"
       ],
       "Hash": "9c8ab14c00ac07e9e04d1664c0b74486"
+    },
+    "pbmcapply": {
+      "Package": "pbmcapply",
+      "Version": "1.5.1",
+      "Source": "Repository",
+      "Repository": "RSPM",
+      "Requirements": [
+        "parallel",
+        "utils"
+      ],
+      "Hash": "bf173fb42b60f8f404f7a9f9c3f95d0d"
     },
     "pillar": {
       "Package": "pillar",
