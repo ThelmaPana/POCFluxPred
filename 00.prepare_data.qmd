@@ -128,6 +128,56 @@ image(poc_mo[,,1,1], col = cmocean("matter")(100), main = "Surface, January")
 image(poc_mo[,,1,7], col = cmocean("matter")(100), main = "Surface, July")
 ```
 
+### Format for future prediction
+
+Format the POC concentration data as a dataframe to be used later for predicting POC flux. First, let’s compute an annual climatology.
+
+```{r ann_clim}
+# Do it parallel on depth
+poc_ann <- mclapply(1:length(depth), function(d) {
+  # Get one layer
+  s_block <- poc_mo[,,d,]
+  # Compute annual mean for each pixel
+  return(apply(s_block, c(1, 2), mean, na.rm = TRUE))
+}, mc.cores = n_cores) %>%
+  abind(along = 3)
+
+# Plot surface climatology
+image(poc_ann[,,1], col = cmocean("matter")(100), main = "Surface annual")
+```
+
+And convert to dataframe.
+
+```{r to_df}
+# To vector and to single column df
+df_poc <- poc_ann %>% as.vector() %>% as.data.frame() %>% setNames("poc")
+# Add lon, lat and depth
+df_poc$lon <- lon
+df_poc$lat <- rep(lat, each=length(lon))
+df_poc$depth <- rep(depth, each=length(lon)*length(lat))
+# Convert to tibble
+df_poc <- df_poc %>% as_tibble() %>% select(lon, lat, depth, poc)
+
+# Plot surface map
+df_poc %>%
+  filter(depth == 0) %>%
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_tile(aes(x = lon, y = lat, colour = poc, fill = poc)) +
+  scale_colour_cmocean(name = "matter", na.value = NA) + 
+  scale_fill_cmocean(name = "matter", na.value = NA) + 
+  labs(title = "Surface POC") +
+  coord_quickmap(expand = 0)
+```
+
+Reshape the dataframe to have one column per depth.
+
+```{r df_wide}
+df_poc <- df_poc %>% 
+  mutate(depth = paste0("poc_", depth)) %>% 
+  pivot_wider(names_from = depth, values_from = poc)
+```
+
 ## Match POC flux with POC  concentration profiles
 
 ### Round coordinates
@@ -269,5 +319,5 @@ df_all %>%
 Save our dataset.
 
 ```{r save}
-save(df_all, file = "data/00.df_all.Rdata")
+save(df_all, df_poc, file = "data/00.df_all.Rdata")
 ```
