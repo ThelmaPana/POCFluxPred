@@ -107,6 +107,9 @@ res <- pbmclapply(1:nrow(folds), function(i){
   )
   final_res <- fit(final_rf, df_train)
   
+  ## Save model to use later
+  save(final_res, file = paste0("models/01.fold_", str_pad(i, width = 2, pad = "0"), ".rda"))
+  
   ## Prediction on outer folds
   preds <- predict(final_res, new_data = df_test) %>%
     bind_cols(df_test %>% select(log_poc_flux))
@@ -133,21 +136,6 @@ res <- pbmclapply(1:nrow(folds), function(i){
     DALEX::model_profile(explainer = rf_explain, variables = my_var)$cp_profiles %>% as_tibble()
   }) %>%
     bind_rows()
-  
-  ## Predict new data
-  new_preds <- augment(
-    final_res, 
-    new_data = df_poc %>% 
-      mutate(
-        poc_flux = NA,
-        depth_trap = 1000,
-        .before = lon
-      ) %>% 
-      drop_na(poc_0)
-    ) %>% 
-    select(-poc_flux) %>% 
-    rename(pred_log_poc_flux = .pred) %>% 
-    mutate(pred_poc_flux = 10^(pred_log_poc_flux), .after = pred_log_poc_flux)
 
   ## Return results
   return(tibble(
@@ -157,8 +145,7 @@ res <- pbmclapply(1:nrow(folds), function(i){
     fold = x$id,
     preds = list(preds),
     importance = list(full_vip),
-    cp_profiles = list(cp_profiles),
-    new_preds = list(new_preds)
+    cp_profiles = list(cp_profiles)
   ))
 }, mc.cores = 5, ignore.interactive = TRUE) %>%
   bind_rows()

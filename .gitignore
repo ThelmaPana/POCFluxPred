@@ -54,6 +54,9 @@ draft*
 # Data
 data/
 
+# Models
+models/ 
+
 # Quarto cache
 *_cache
 *_files
