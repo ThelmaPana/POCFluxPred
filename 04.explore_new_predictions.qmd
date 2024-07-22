@@ -1,0 +1,167 @@
+---
+title: "Explore new POC flux predictions"
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+editor: visual
+cache: true
+---
+
+```{r set_up}
+#| output: false
+source("utils.R")
+load("data/03.new_preds.Rdata")
+load("data/00.df_all.Rdata")
+```
+
+::: callout-note
+## To Do
+
+-   consider a PCA on the input data to reduce the dimensionality and easily explore data distribution between training and new predictions
+:::
+
+## POC flux maps
+
+### 100 m
+
+```{r flux_100}
+#| fig-column: body-outset
+#| out-width: 100%
+new_preds %>% 
+  filter(type == "flux_100") %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_tile(aes(x = lon, y = lat, colour = avg_poc_flux, fill = avg_poc_flux)) +
+  scale_fill_cmocean(name = "speed") +
+  scale_colour_cmocean(name = "speed") +
+  labs(
+    title = "POC flux avg at 100 m from stratified CV", 
+    fill = "POC flux<br>(mg m<sup>-2</sup> d<sup>-1</sup>)",
+    colour = "POC flux<br>(mg m<sup>-2</sup> d<sup>-1</sup>)"
+  ) +
+  coord_quickmap(expand = 0) +
+  theme(legend.title = element_markdown())
+
+new_preds %>% 
+  filter(type == "flux_100") %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_tile(aes(x = lon, y = lat, colour = sd_poc_flux, fill = sd_poc_flux)) + 
+  ggplot2::scale_fill_viridis_c(option = "E") +
+  ggplot2::scale_colour_viridis_c(option = "E") +
+  labs(
+    title = "POC flux sd at 100 m from stratified CV", 
+    fill = "POC flux<br>sd<br>(mg m<sup>-2</sup> d<sup>-1</sup>)",
+    colour = "POC flux<br>sd<br>(mg m<sup>-2</sup> d<sup>-1</sup>)"
+  ) +
+  coord_quickmap(expand = 0) +
+  theme(legend.title = element_markdown())
+```
+
+::: callout-important
+Not great, need to explore the training data to check if we do have training data of POC  flux at 100 m, otherwise the model is extrapolating outside of the range of the training data, which is bad.
+:::
+
+### 1000 m
+
+```{r flux_1000}
+#| fig-column: body-outset
+#| out-width: 100%
+new_preds %>% 
+  filter(type == "flux_1000") %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_tile(aes(x = lon, y = lat, colour = avg_poc_flux, fill = avg_poc_flux)) +
+  scale_fill_cmocean(name = "speed") +
+  scale_colour_cmocean(name = "speed") +
+  labs(
+    title = "POC flux avg at 1000 m from stratified CV", 
+    fill = "POC flux<br>(mg m<sup>-2</sup> d<sup>-1</sup>)",
+    colour = "POC flux<br>(mg m<sup>-2</sup> d<sup>-1</sup>)"
+  ) +
+  coord_quickmap(expand = 0) +
+  theme(legend.title = element_markdown())
+
+new_preds %>% 
+  filter(type == "flux_1000") %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_tile(aes(x = lon, y = lat, colour = sd_poc_flux, fill = sd_poc_flux)) + 
+  ggplot2::scale_fill_viridis_c(option = "E") +
+  ggplot2::scale_colour_viridis_c(option = "E") +
+  labs(
+    title = "POC flux sd at 1000 m from stratified CV", 
+    fill = "POC flux<br>sd<br>(mg m<sup>-2</sup> d<sup>-1</sup>)",
+    colour = "POC flux<br>sd<br>(mg m<sup>-2</sup> d<sup>-1</sup>)"
+  ) +
+  coord_quickmap(expand = 0) +
+  theme(legend.title = element_markdown())
+```
+
+## POC flux profiles
+
+```{r flux_prof}
+#| fig-column: screen-inset
+#| out-width: 100%
+#| fig-width: 10
+#| fig-height: 10
+new_prof <- new_preds %>% 
+  filter(type == "flux_prof") %>% 
+  group_by(lon, lat) %>% 
+  mutate(id = cur_group_id()) %>% 
+  ungroup() %>% 
+  select(id, lon, lat, everything())
+
+#ggplot(new_prof) +
+#  geom_path(aes(x = avg_poc_flux, y = -depth)) +
+#  labs(x = "Pred POC flux (mg m<sup>-2</sup> d<sup>-1</sup>)", y = "Depth (m)") +
+#  facet_wrap(~id) +
+#  theme(axis.title.x = element_markdown())
+
+ggplot(new_prof) +
+  geom_path(aes(y = avg_poc_flux, x = -depth)) +
+  geom_ribbon(aes(ymin = avg_poc_flux - sd_poc_flux, ymax = avg_poc_flux + sd_poc_flux, x = -depth), alpha = 0.2) +
+  labs(y = "Pred POC flux (mg m<sup>-2</sup> d<sup>-1</sup>)", x = "Depth (m)") +
+  facet_wrap(~id) +
+  coord_flip() +
+  theme(axis.title.x = element_markdown())
+```
+
+## Training data distribution
+
+Check coverage at 100 m.
+
+```{r map_obs_100}
+#| fig-column: body-outset
+#| out-width: 100%
+df_all %>% 
+  select(lon, lat, poc_flux, log_poc_flux, depth_trap) %>% 
+  filter(depth_trap <= 100) %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat), size = 0.5) +
+  coord_quickmap(expand = 0)
+```
+
+::: callout-important
+Indeed, the spatial coverage above 100 m is very poor, we cannot predict fluxes at 100 m. But what about other depths above 1000 m?
+:::
+
+```{r map_obs_bins}
+#| fig-column: screen-inset
+#| out-width: 100%
+#| fig-width: 10
+#| fig-height: 10
+df_all %>% 
+  select(lon, lat, poc_flux, log_poc_flux, depth_trap) %>% 
+  filter(depth_trap <= 1000) %>% 
+  mutate(depth_bin = cut(depth_trap, breaks = seq(0, 1000, by = 100))) %>% 
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat), size = 0.5) +
+  coord_quickmap(expand = 0) +
+  facet_wrap(~depth_bin, ncol = 2)
+```
