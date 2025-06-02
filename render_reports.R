@@ -24,7 +24,7 @@ for (dir in experiment_dirs) {
   )
   
   # Move to target dir and render document
-  old = setwd(dir)
+  old <- setwd(dir)
   system(cmd)
   setwd(old)
   
