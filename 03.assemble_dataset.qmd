@@ -1,0 +1,347 @@
+---
+title: "Assemble dataset of POC flux, POC concentrations and env data."
+subtitle: "Join POC flux observations with POC profile properties and env data based on space and time."
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    lightbox: true
+editor: visual
+cache: true
+---
+
+```{r set_up}
+#| output: false
+#| cache: false
+source("utils.R")
+```
+
+## Read data
+
+Read POC flux and POC concentration data.
+
+```{r read}
+load("data/00.df_poc_flux.Rdata")
+load("data/01.df_poc.Rdata")
+load("data/02.df_env_monthly.Rdata")
+```
+
+## Assemble
+
+### Get sediment traps deployment months
+
+POC concentration data has a monthly temporal resolution. To match it with POC flux data, we need to know the months covered for each sediment trap deployment. Thus, for each deployment, let’s use the deployment and recovery date to generate a list of deployment months, as well as the number of deployment days in each month, in order to compute a weighted average of POC concentration data.
+
+```{r extract_mo_days}
+# Set up parallel processing
+plan(multisession, workers = 8)  
+
+extract_months_and_days <- function(start_date, end_date) {
+  # Compute start and end months
+  start_month <- floor_date(start_date, "month")
+  end_month <- floor_date(end_date, "month")
+  
+  # Calculate the sequence of months
+  all_months <- seq.Date(start_month, end_month, by = "month")
+  
+  # Calculate the number of deployment days in each month
+  deployment_days <- numeric(length(all_months))
+  
+  for (i in seq_along(all_months)) {
+    month_start <- all_months[i]
+    month_end <- ceiling_date(month_start, "month") - days(1)
+    interval_start <- pmax(start_date, month_start)
+    interval_end <- pmin(end_date, month_end)
+    deployment_days[i] <- as.numeric(interval_end - interval_start + 1)
+  }
+  
+  # Return a list of months and deployment days
+  return(list(months = format(all_months, "%m") %>% as.numeric(), days = deployment_days))
+}
+
+# Function to apply to each row in parallel
+process_row <- function(row_data) {
+  result <- extract_months_and_days(row_data$start_date, row_data$end_date)
+  # Return the original row with the new list columns added
+  row_data$months <- list(result$months)
+  row_data$days <- list(result$days)
+  return(row_data)
+}
+
+# Parallelized data transformation
+df_flux_long <- df_flux %>%
+  # Convert to a list of rows for parallel processing
+  split(1:nrow(.)) %>%
+  # Apply the function in parallel
+  future_lapply(function(row_data) {
+    process_row(row_data)
+  }) %>%
+  # Convert back to a dataframe
+  bind_rows() %>% 
+  # Unnest
+  unnest(c(months, days)) %>% 
+  rename(month = months) %>% 
+  mutate(month = as.integer(month))
+
+plan(sequential)
+```
+
+### Average POC profile properties and environment
+
+Now, let’s perform a weighted average on the mensual POC concentration data.
+
+```{r w_avg}
+# Function to calculate weighted average with proper NA handling
+# If a POC flux observation is associated to at least one non NA POC observation, then use it
+# Otherwise, assign it to NA
+weighted_avg <- function(x, weights) {
+  # Check if all values are NA
+  if(all(is.na(x))) {
+    return(NA_real_)
+  } else {
+    # Calculate weighted average ignoring NA values
+    valid_indices <- !is.na(x)
+    sum(weights[valid_indices] * x[valid_indices], na.rm = TRUE) / 
+      sum(weights[valid_indices], na.rm = TRUE)
+  }
+}
+
+df_all <- df_flux_long %>% 
+  # Keep columns of interest
+  select(id, lon, lat, depth_trap, poc_flux, month, days) %>% 
+  # Join with POC concentration data
+  left_join(df_poc, by = join_by(lon, lat, month)) %>% 
+  # Join with env data
+  left_join(df_env_m, by = join_by(lon, lat, month)) %>% 
+  # Compute the weighted average
+  group_by(id, lon, lat, depth_trap, poc_flux) %>% 
+  summarise(
+    across(
+      c(att:par),
+      ~ weighted_avg(.x, days),
+      .names = "{.col}"
+    ),
+    .groups = "drop"
+  ) %>% 
+  # Drop missing , i.e. POC fluxes not associated with POC conc
+  drop_na() %>% 
+  # Reorder columns
+  select(id, lon, lat, poc_flux, everything())
+```
+
+## Explore
+
+### POC flux and POC concentration
+
+Explore the resulting dataset, which contains `r nrow(df_all)` observations.
+
+#### Correlation analysis
+
+Let’s start with some correlations, using only POC flux and POC concentrations.
+
+```{r exp_corr}
+M <- cor(df_all %>% select(poc_flux, depth_trap, att, poc_max, depth_poc_max))
+corrplot(M, diag = TRUE, type = "upper", method = "ellipse", addCoef.col = 'black', tl.col = "black", cl.pos = 'n')
+```
+
+On the correlation plot, `poc_flux` is negatively correlated to `depth_trap`, i.e. low POC flux at high depth. There is also a positive correlation between `att` and `poc_max` (high values corresponding to productive areas); and a negative correlation between `poc_max` and `depth_poc_max`, revealing a contrast between productive (high POC and shallow POC maximum) and non productive (low POC and deep POC maximum) areas.
+
+#### PCA
+
+Let’s also run a PCA. Only future predictors (depth_trap, att, poc_max, depth_poc_max) are used to build the factorial space. Both poc_flux, lon and lat (absolute value) are projected into the space to ease interpretation.
+
+```{r exp_pca}
+# Run the PCA
+pca <- rda(
+  df_all %>% select(depth_trap, att, poc_max, depth_poc_max),
+  scale = TRUE
+)
+
+# Fit supplementary variables (lon and lat)
+ef <- envfit (
+  pca ~ ., 
+  data = df_all %>% mutate(lat_abs = abs(lat)) %>%  select(poc_flux, lon, lat_abs), 
+  na.rm = T, choices = c(1:5)
+)
+
+# Extract coordinates of env data projection
+supp_proj <- as.data.frame(ef$vectors$arrows*sqrt(ef$vectors$r)) %>% 
+  rownames_to_column(var = "var") %>% 
+  as_tibble() %>% 
+  mutate(orig = 0)
+
+# Extract eigenvalues
+eig <- as.data.frame(t(summary(eigenvals(pca)))) %>% 
+  rownames_to_column(var = "PC") %>% 
+  as_tibble() %>% 
+  rename(
+    eigenvalue = Eigenvalue, 
+    prop_exp = `Proportion Explained`, 
+    cum_prop = `Cumulative Proportion`
+  ) %>% 
+  mutate(PC = str_remove(PC, "PC") %>% as.numeric() %>% as.factor())
+
+# Plot eigenvalues
+ggplot(eig) + 
+  geom_col(aes(x = PC, y = prop_exp)) +
+  theme_classic()
+
+# Get variables
+vars <- pca$CA$v %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "var") %>% 
+  as_tibble() %>% 
+  mutate(orig = 0)
+
+# Get individuals
+inds <- bind_cols(
+  df_all,
+  pca$CA$u %>% as_tibble()
+)
+
+k <- 10
+# Plot
+ggplot() +
+  geom_vline(xintercept = 0, colour = "grey") +
+  geom_hline(yintercept = 0, colour = "grey") +
+  geom_point(data = inds, aes(x = k*PC1, y = k*PC2), size = 0.5, alpha = 0.2, colour = "grey") +
+  geom_segment(data = vars, aes(x = orig, y = orig, xend = PC1, yend = PC2), color = "#08519c", arrow = arrow(length = unit(2, "mm"))) +
+  geom_text_repel(data = vars, aes(x = PC1, y = PC2, label = var), colour = "#08519c") +
+  geom_segment(data = supp_proj, aes(x = orig, y = orig, xend = PC1, yend = PC2), color = "#3182bd", arrow = arrow(length = unit(2, "mm"))) +
+  geom_text_repel(data = supp_proj, aes(x = PC1, y = PC2, label = var), colour = "#3182bd") +
+  labs(x = "PC1", y = "PC2") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+```
+
+Clear pattern in the dataset: 
+
+-   PC1 shows the latitudinal gradient: high `poc_max` and `att` at high latitudes, `high` depth_poc_max at low latitudes
+
+-   PC2 shows the depth gradient:  higher flux at low `depth_trap`
+
+Let’s now plot PC1 and PC2 on the map.
+
+```{r exp_map}
+ggplot(inds) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = PC1)) +
+  div_pal +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_quickmap(expand = 0)
+
+ggplot(inds) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = PC2)) +
+  div_pal +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_quickmap(expand = 0)
+```
+
+We do see the latitudinal gradient on PC1. Nothing on PC2 as it’s related to the depth of the trap.
+
+### Env data
+
+#### Correlation analysis
+
+```{r corr_env}
+M_env <- cor(df_all %>% select(temperature.surf:par))
+corrplot(M_env, diag = TRUE, type = "upper", method = "ellipse", cl.pos = 'n', tl.col = "black", tl.cex = 0.5)
+```
+
+#### PCA
+
+Also perform a PCA to summarise env data.
+
+```{r pca_env}
+# Run pca
+# Run the PCA
+pca_env <- rda(
+  df_all %>% select(temperature.surf:par),
+  scale = TRUE
+)
+
+# Extract eigenvalues
+eig_env <- as.data.frame(t(summary(eigenvals(pca_env)))) %>% 
+  rownames_to_column(var = "PC") %>% 
+  as_tibble() %>% 
+  rename(
+    eigenvalue = Eigenvalue, 
+    prop_exp = `Proportion Explained`, 
+    cum_prop = `Cumulative Proportion`
+  ) %>% 
+  mutate(PC = str_remove(PC, "PC") %>% as.numeric() %>% as.factor())
+
+# Plot eigenvalues
+ggplot(eig_env) + 
+  geom_col(aes(x = PC, y = prop_exp)) +
+  theme_classic()
+
+# Get variables
+vars_env <- pca_env$CA$v %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "var") %>% 
+  as_tibble() %>% 
+  mutate(orig = 0)
+
+# Get individuals
+inds_env <- bind_cols(
+  df_all,
+  pca_env$CA$u %>% as_tibble()
+)
+
+k <- 10
+# Plot
+# Axes 1 and 2
+ggplot() +
+  geom_vline(xintercept = 0, colour = "grey") +
+  geom_hline(yintercept = 0, colour = "grey") +
+  geom_point(data = inds_env, aes(x = k*PC1, y = k*PC2), size = 0.5, alpha = 0.2, colour = "grey") +
+  geom_segment(data = vars_env, aes(x = orig, y = orig, xend = PC1, yend = PC2), color = "#08519c", arrow = arrow(length = unit(2, "mm"))) +
+  geom_text_repel(data = vars_env, aes(x = PC1, y = PC2, label = var), colour = "#08519c") +
+  labs(x = "PC1", y = "PC2") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+# Axes 3 and 4
+ggplot() +
+  geom_vline(xintercept = 0, colour = "grey") +
+  geom_hline(yintercept = 0, colour = "grey") +
+  geom_point(data = inds_env, aes(x = k*PC3, y = k*PC4), size = 0.5, alpha = 0.2, colour = "grey") +
+  geom_segment(data = vars_env, aes(x = orig, y = orig, xend = PC3, yend = PC4), color = "#08519c", arrow = arrow(length = unit(2, "mm"))) +
+  geom_text_repel(data = vars_env, aes(x = PC3, y = PC4, label = var), colour = "#08519c") +
+  labs(x = "PC3", y = "PC4") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+# Plot maps of PC1 and PC2
+ggplot(inds_env) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = PC1)) +
+  div_pal +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_quickmap(expand = 0)
+
+ggplot(inds_env) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = PC2)) +
+  div_pal +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_quickmap(expand = 0)
+```
+
+## Save
+
+```{r save}
+# 1st dataset: poc flux, poc conc and env original
+#save(df_all, file = "data/03.df_all.Rdata")
+write_csv(df_all, file = "data/03.df_all.csv")
+
+# 2nd dataset: poc flux, poc conc and PC axes of env
+df_all_pca <- inds_env
+#save(df_all_pca, file = "data/03.df_all_pca.Rdata")
+write_csv(df_all_pca, file = "data/03.df_all_pca.csv")
+```

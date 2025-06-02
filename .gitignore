@@ -55,8 +55,10 @@ draft*
 data/
 
 # Models
-models/ 
+models/
 
 # Quarto cache
 *_cache
 *_files
+
+/.quarto/

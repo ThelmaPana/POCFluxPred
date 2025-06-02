@@ -1,0 +1,185 @@
+---
+title: "Prepare POC flux data using Simon’s new POC flux database."
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    lightbox: true
+editor: visual
+cache: true
+---
+
+```{r set_up}
+#| output: false
+source("utils.R")
+```
+
+## Read sediment traps data
+
+Read POC flux (mg/m²/d) data.
+
+```{r read_flux}
+# POC flux in mg/m²/day
+df_flux <- read_csv("data/raw/POC_flux/Global_POC_Database_2025-04-28.csv", show_col_types = FALSE)
+
+# Clean: keep only sediment traps and select relevant columns
+df_flux <- df_flux %>% 
+  filter(
+    New_category == "sediment trap",
+    !is.na(depth) # drop unknown depth (only 12 cases)
+  ) %>% 
+  select(
+    lon_grid, lat_grid,
+    depth_trap = depth,
+    poc_converted,
+    converted_date, converted_date_deployment, converted_date_recovery,
+    date_formatted, date_num, duration
+  ) %>% 
+  mutate(duration = duration %>% as.numeric() %>% round()) # make duration (days) a number and round it
+```
+
+## Clean deployment and recovery dates
+
+Let’s perform some cleaning on the data.
+
+```{r clean}
+df_flux <- df_flux %>%
+  mutate(
+    # Set deployment_final
+    deployment_final = case_when(
+      # Case 1: deployment date is known -> use deployment date
+      !is.na(converted_date_deployment) ~ converted_date_deployment,
+      # Case 2: deployment date is not known but date is known -> use date as deployment date
+      (is.na(converted_date_deployment) & !is.na(converted_date)) ~ converted_date,
+      # Case 3: deployment date and date and duration are not known but recovery date is known -> use recovery date as deployment date, assuming a snapshot deployment
+      (is.na(converted_date_deployment) & is.na(converted_date) & is.na(duration) & !is.na(converted_date_recovery)) ~ converted_date_recovery,
+      # Case 3: deployment date and date are not known but recovery date and duration are known -> use recovery date and deployment to compute deployment date
+      (is.na(converted_date_deployment) & is.na(converted_date) & !is.na(duration) & !is.na(converted_date_recovery)) ~ converted_date_recovery - days(duration),
+      TRUE ~ NA_Date_
+    ),
+    # Set recovery_final
+    recovery_final = case_when(
+      # Case 1: recovery date is known -> use recovery date
+      !is.na(converted_date_recovery) ~ converted_date_recovery,
+      # Case 2: recovery date and duration are not known but deployment date is known -> use deployment date, assuming a snapshot deployment
+      (is.na(converted_date_recovery) & !is.na(converted_date_deployment)) ~ converted_date_deployment,
+      # Case 3: recovery date and duration and deployment date are not known but date is known -> use date, assuming a snapshot deployment
+      (is.na(converted_date_recovery) & is.na(duration) & is.na(converted_date_deployment) & !is.na(converted_date)) ~ converted_date,
+      # Case 4: recovery date is not known but duration and deployment date are known -> compute recovery from deployment date and duration
+      (is.na(converted_date_recovery) & !is.na(duration) & !is.na(converted_date_deployment)) ~ converted_date_deployment + days(duration),
+      # Case 5: recovery date and deployment date are not known but duration and date are known -> compute recovery from date and duration
+      (is.na(converted_date_recovery) & is.na(converted_date_deployment) & !is.na(duration) & !is.na(converted_date)) ~ converted_date + days(duration),
+      TRUE ~ NA_Date_
+)) %>% 
+  select(lon = lon_grid, lat = lat_grid, depth_trap, poc_flux = poc_converted, start_date = deployment_final, end_date = recovery_final) %>% 
+  filter(depth_trap < 8000) # drop the only point below 8000 m
+
+
+# Convert start_date and end_date to date
+# Generate obs id
+df_flux <- df_flux %>% 
+  filter(!is.na(start_date)) %>% 
+  mutate(
+    start_date = as_date(start_date),
+    end_date = as_date(end_date)
+  ) %>% 
+  mutate(id = row_number() %>% as.character(), .before = lon)
+
+
+## Check that recovery date is posterior or equal to deployment date
+# Drop observations where deployment date is posterior to recovery date
+df_flux <- df_flux %>% filter(end_date >= start_date) 
+```
+
+Round coordinates to match with POC data.
+
+```{r round_coord}
+df_flux <- df_flux %>% 
+  mutate(
+    lon = roundp(lon, f = floor, precision = 1) + 0.5,
+    lat = roundp(lat, f = floor, precision = 1) + 0.5
+  )
+```
+
+## Explore
+
+### Maps
+
+Map of number of observation per location.
+
+```{r flux_map}
+df_flux %>%
+  add_count(lon, lat) %>%
+  ggplot() +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = n)) +
+  scale_colour_viridis_c(trans = "log10") +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_quickmap(expand = 0)
+```
+
+::: callout-note
+Points with very high number of observations are likely timeseries. Keep them for now but they might be useful to validate POC  flux predictions in the future.
+:::
+
+Map of POC flux
+
+```{r map_poc_flux}
+ggplot(df_flux) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = poc_flux)) +
+  scale_colour_cmocean(name = "matter", trans = "log1p") +
+  labs(x = "Longitude", y = "Latitude", colour = "POC flux") +
+  coord_quickmap(expand = 0)
+```
+
+Map of deployment depth.
+
+```{r map_depth}
+ggplot(df_flux) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = depth_trap)) +
+  scale_colour_cmocean(name = "deep") +
+  labs(x = "Longitude", y = "Latitude", colour = "Trap depth (m)") +
+  coord_quickmap(expand = 0)
+```
+
+### Distributions
+
+Depth of sediment traps.
+
+```{r dist_trap_depth}
+ggplot(df_flux) + 
+  geom_histogram(aes(x = depth_trap), binwidth = 100) +
+  labs(x = "Trap depth (m)", y = "Count") +
+  theme_classic()
+```
+
+POC fluxes.
+
+```{r dist_poc_flux}
+ggplot(df_flux) + 
+  geom_histogram(aes(x = poc_flux), bins = 100) +
+  labs(x = "POC_flux", y = "Count") +
+  scale_x_log10() +
+  theme_classic()
+```
+
+POC flux VS depth.
+
+```{r flux_depth}
+ggplot(df_flux) + 
+  geom_point(aes(x = poc_flux, y = -depth_trap), size = 0.5, alpha = 0.5) +
+  labs(x = "POC flux", y = "Trap depth (m)") +
+  theme_classic()
+```
+
+## Save
+
+Save dataset.
+
+```{r save}
+save(df_flux, file = "data/00.df_poc_flux.Rdata")
+```

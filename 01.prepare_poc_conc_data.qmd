@@ -1,0 +1,208 @@
+---
+title: "Prepare POC concentration data"
+subtitle: "Compute POC profile properties at mensual and 1° resolution, using the 2024 version of the SOCA product."
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    lightbox: true
+editor: visual
+cache: false
+---
+
+```{r set_up}
+#| output: false
+source("utils.R")
+```
+
+## Read POC concentration data
+
+Data is stored in 12 NetCDF files.
+
+```{r read}
+# List NC files to read
+files <- list.files("data/raw/soca_2024/", full.names = TRUE)
+
+# Open one file to get dims
+nc <- nc_open(files[1])
+lon <- ncvar_get(nc, "longitude")
+lat <- ncvar_get(nc, "latitude")
+depth <- ncvar_get(nc, "depth")
+nc_close(nc)
+
+# Prepare storage for 12 months
+poc_mo <- array(NA, c(length(lon), length(lat), length(depth), 12))
+# Read all files
+for(i in 1:12) {
+  # get relevant files
+  file <- files[i]
+  # open the file and read the data in it
+  nc <- nc_open(file)
+  poc_mo[,,,i] <- ncvar_get(nc, "poc")
+  nc_close(nc)
+}
+
+dim(poc_mo)
+```
+
+Current resolution is 0.25° in lon and lat. We want to downgrade it to 1°, for this we need to make sure that we have 4 values for each degree of lon and lat.
+
+```{r check_coord}
+summary(lon)
+# lon from -179.875 to 179.875: 4 values per degree. Length is 1440, which is 4*360. OK!
+summary(lat)
+# lat from -82.125 to 89.875: 4 values per degree, except 1 value for degree -82. Need to drop it. 
+# Drop first element on latitude
+poc_mo <- poc_mo[, -1, , ]
+lat <- lat[-1]
+# Length is 688, which is 4*172. A few high latitudes are missing in the south, so it’s OK!
+```
+
+## Downgrade spatial resolution to 1°
+
+```{r downgrade_spat}
+# Prepare storage
+poc_agg <- array(dim = c(360, 172, 36, 12))
+
+# Loop over depth and months indices
+for (depth_idx in 1:36) {
+  for (month_idx in 1:12) {
+    # Extract the 2D spatial slice for the current depth and month
+    slice <- poc_mo[, , depth_idx, month_idx]
+    
+    # Convert to SpatRaster
+    r <- rast(slice, extent = c(min(lon), max(lon), min(lat), max(lat)))
+    
+    # Aggregate to 1° spatial resolution
+    r_agg <- aggregate(r, fact = 4, fun = mean, na.rm = TRUE)
+    
+    # Save the aggregated slice back into the result array
+    poc_agg[, , depth_idx, month_idx] <- as.array(r_agg)[,,1]
+  }
+}
+
+dim(poc_agg) 
+# 360 lon × 172 lat. OK!
+
+# New lon and lat values
+lon <- unique(roundp(lon, precision = 1, f = floor) + 0.5)
+lat <- unique(roundp(lat, precision = 1, f = floor) + 0.5)
+n_lon <- length(lon)
+n_lat <- length(lat)
+```
+
+## Compute attenuation for each profile, in parallel
+
+Let’s extract a few properties for each profile: the attenuation, the value of maximal \[POC\] and the depth of maximal \[POC\]. To do so, we fit an attenuation model following Martin’s law:
+
+$$\left[ POC \right]_z = \left[ POC \right]_{z0} \left( \frac{z}{z0} \right)^{-b}$$
+
+Note that `log(z/z0)` is not defined if `z0 == 0`, thus we need to drop POC values at surface to ensure that `z0` is not `0`.
+
+```{r comp_att}
+# Drop surface
+poc_agg <- poc_agg[,,-1,]
+depth <- depth[-1]
+
+# Set up parallel backend
+plan(multisession, workers = 8)
+
+# Function to process each (i, j, k) combination
+process_poc <- function(i, j, k, lon_values, lat_values) {
+  # Map indices to lon/lat values using the predefined lists
+  lon <- lon_values[i]
+  lat <- lat_values[j]
+  
+  # Get poc vector
+  poc_vec <- poc_agg[i, j, , k] # depth is 3rd dimension
+  
+  # If we have at least 5 poc values, proceed with attenuation computation
+  if (sum(!is.na(poc_vec)) > 4) {
+    # Extract reference depth corresponding to the max poc value
+    z0 <- depth[which.max(poc_vec)]
+    # Keep only poc values below this depth
+    poc_vec[depth < z0] <- NA
+    
+    # Fit the model
+    fit <- lm(log(poc_vec) ~ log(depth / z0))
+    
+    # Return a list of results
+    list(lon = lon, lat = lat, month = k, att = -coef(fit)[2], poc_max = max(poc_vec, na.rm = TRUE), depth_poc_max = z0)
+  } else {
+    list(lon = lon, lat = lat, month = k, att = NA, poc_max = NA, depth_poc_max = NA)
+  }
+}
+
+# Create a data frame of all (lon, lat, month) combinations
+index_df <- expand.grid(i = 1:n_lon, j = 1:n_lat, k = 1:12)
+
+# Apply the function in parallel
+df_poc <- future_pmap(index_df, process_poc, lon_values = lon, lat_values = lat) %>% 
+  bind_rows()
+
+plan(sequential)
+
+# Drop missing pixels
+df_poc <- df_poc %>% drop_na()
+```
+
+## Plot profile properties
+
+### Attenuation
+
+```{r plot_att}
+#| warning: false
+ggplot(df_poc) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_raster(aes(x = lon, y = lat, fill = att)) +
+  scale_fill_viridis_c(na.value = NA) +
+  labs(x = "Longitude", y = "Latitude", fill = "Att.") +
+  coord_quickmap(expand = 0) +
+  facet_wrap(~month, ncol = 3)
+```
+
+::: callout-note
+OK!
+:::
+
+### POC max
+
+```{r plot_poc_max}
+#| warning: false
+ggplot(df_poc) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_raster(aes(x = lon, y = lat, fill = poc_max)) +
+  scale_fill_cmocean(name = "matter", na.value = NA) +
+  labs(x = "Longitude", y = "Latitude", fill = "[POC] max") +
+  coord_quickmap(expand = 0) +
+  facet_wrap(~month, ncol = 3)
+```
+
+::: callout-note
+OK!
+:::
+
+### Depth of POC max
+
+```{r plot_depth_poc_max}
+#| warning: false
+ggplot(df_poc) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_raster(aes(x = lon, y = lat, fill = depth_poc_max)) +
+  scale_fill_cmocean(name = "deep", na.value = NA) +
+  labs(x = "Longitude", y = "Latitude", fill = "Depth\n[POC] max") +
+  coord_quickmap(expand = 0) +
+  facet_wrap(~month, ncol = 3)
+```
+
+::: callout-caution
+A bit noisy in the southern ocean.
+:::
+
+## Save
+
+```{r save}
+save(df_poc, file = "data/01.df_poc.Rdata")
+```
