@@ -1,0 +1,267 @@
+---
+title: "Experiment report"
+author: "Thelma Panaïotis"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+params:
+  config_path: null
+cache: false
+---
+
+```{r set_up}
+#| output: false
+#| cache: false
+source(here::here("utils.R"))
+config_path <- params$config_path
+config_dir <- dirname(config_path)
+config <- yaml::read_yaml(config_path)
+```
+
+## Read predictions
+
+```{r read}
+res_xgb <- readRDS(fs::path(config_dir, "results", "res_xgb.rds"))
+
+# Extract predictions
+preds <- res_xgb %>% 
+  select(cv_type, fold, preds) %>% 
+  unnest(preds) %>% 
+  mutate(resid = .pred - log_poc_flux)
+```
+
+## Prediction performance
+
+### Rsquares and RMSE
+
+Compute R² for each fold and plot results.
+
+```{r rsquares}
+# Compute Rsquare for each fold
+rsquares <- preds %>%
+  group_by(cv_type, fold) %>%
+    summarise(
+    rsq = rsq_vec(log_poc_flux, .pred),
+    rmse = rmse_vec(log_poc_flux, .pred),
+    .groups = "drop"
+  )
+
+# Distribution of Rsquares by CV type
+rsquares %>% split(.$cv_type) %>% map(summary)
+
+ggplot(rsquares) +
+  geom_boxplot(aes(x = cv_type, y = rsq, colour = cv_type), show.legend = FALSE) +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  labs(x = "CV type", y = "R²") +
+  theme_classic()
+```
+
+```{r rmse}
+ggplot(rsquares) +
+  geom_boxplot(aes(x = cv_type, y = rmse, colour = cv_type), show.legend = FALSE) +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  labs(x = "CV type", y = "RMSE") +
+  theme_classic()
+```
+
+### Prediction VS truth
+
+Plot prediction VS true POC flux. The grey line represents the 1:1 line.
+
+```{r plot_pred_vs_truth}
+ggplot(preds) +
+  geom_bin_2d(aes(x = log_poc_flux, y = .pred), bins = 100) +
+  geom_abline(slope = 1, intercept = 0, colour = "grey") +
+  scale_fill_viridis_c() +
+  labs(x = "True log(POC flux)", y = "Predicted log(POC flux)", fill = "n") +
+  theme_classic() +
+  facet_wrap(~cv_type) +
+  coord_fixed() +
+  theme(strip.background = element_blank())
+```
+
+### Maps of residuals
+
+Let’s now look where are the highest residuals.
+
+```{r residuals}
+preds %>% 
+  select(cv_type, fold, resid) %>% 
+  group_by(cv_type, fold) %>% 
+  split(.$cv_type) %>% map(summary)  
+
+ggplot(preds) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = resid)) +
+  div_pal +
+  labs(x = "Longitude", y = "Latitude", fill = "Resid.") +
+  coord_quickmap(expand = 0) +
+  facet_wrap(~cv_type, ncol = 1) +
+  theme(strip.background = element_blank())
+```
+
+## Model interpretation
+
+### Variable importance
+
+```{r vip}
+# Unnest variable importance
+full_vip <- res_xgb %>%
+  #filter(cv_type == "stratified") %>% 
+  select(cv_type, resp, fold, importance) %>%
+  unnest(importance) %>%
+  mutate(variable = forcats::fct_reorder(variable, dropout_loss))
+
+# Get RMSE for full model
+full_rmse <- full_vip %>% 
+  filter(variable == "_full_model_") %>% 
+  select(cv_type, resp, fold, full_dropout_loss = dropout_loss) %>% 
+  distinct()
+
+vip <- full_vip %>% 
+  filter(!str_starts(variable, "_")) %>% # Keep only variables of interest
+  #filter(resp == "doc_surf" & season == "0") %>% # surface annual
+  # Join with full model RMSE
+  left_join(full_rmse, by = join_by(cv_type, fold, resp), relationship = "many-to-many") %>% 
+  # Compute difference
+  mutate(diff_loss = dropout_loss - full_dropout_loss) %>% 
+  group_by(cv_type, fold, variable, resp) %>% 
+  summarise(diff_loss = mean(diff_loss), .groups = "drop") %>% 
+  mutate(
+    variable = forcats::fct_drop(variable),
+    variable = forcats::fct_reorder(variable, diff_loss),
+    variable = forcats::fct_other(variable, keep = tail(levels(variable), n = 5), other_level = "other"),
+    variable = forcats::fct_reorder(variable, diff_loss)
+  )
+
+ggplot(vip) +
+  geom_vline(xintercept = 0, colour = "grey", linewidth = 0.8) +
+  geom_boxplot(aes(x = diff_loss, y = variable, colour = cv_type), show.legend = FALSE) +
+  labs(x = "RMSE increase", y = "Variable") +
+  facet_wrap(~cv_type) +
+  theme_classic() +
+  theme(strip.background = element_blank())
+```
+
+### Partial dependence plots
+
+```{r pdp}
+# Variables for which to plot pdp
+n_pdp <- 4
+vars_pdp <- full_vip %>%
+  filter(variable != "_full_model_") %>%
+  mutate(variable = as.character(variable)) %>%
+  group_by(cv_type, variable) %>%
+  summarise(dropout_loss = mean(dropout_loss), .groups = "drop") %>%
+  arrange(desc(dropout_loss)) %>%
+  group_by(cv_type) %>%
+  slice_head(n = n_pdp)
+
+# Unnest cp_profiles
+cp_profiles <- res_xgb %>% select(cv_type, fold, cp_profiles) %>% unnest(cp_profiles)
+
+## Let’s generate averaged cp profile across folds for each cv-type and propagating uncertainties. 
+## The difficulty is that x values differ between each fold, the solution is to interpolate yhat on a common set of x values across folds.
+## Steps as follows for each cv_type and each variable
+## 1- compute the mean and spread of cp profiles within each fold
+## 2- interpolate yhat value and spread within each fold using a common set of x values
+## 3- perform a weighted average of yhat value and spread, using 1/var as weights
+
+# Get names of folds, for later use
+folds <- sort(unique(full_vip$fold))
+
+# Apply on each cv_type and variable
+mean_pdp <- lapply(1:nrow(vars_pdp), function(r){
+  
+  # Get variable and cvtype
+  var_name <- vars_pdp[r,]$variable
+  cv_type_name <- vars_pdp[r,]$cv_type
+  
+  ## Get corresponding CP profiles, compute mean and spread for each fold (step 1)
+  d_pdp <- cp_profiles %>% 
+    filter(cv_type == cv_type_name & `_vname_` == var_name) %>% 
+    select(cv_type, fold, `_yhat_`, `_vname_`, `_ids_`, all_of(var_name)) %>% 
+    arrange(`_ids_`, across(all_of(var_name))) %>% 
+    # center each cp profiles across fold, variable and ids
+    group_by(cv_type, fold, `_vname_`, `_ids_`) %>%
+    mutate(yhat_cent = `_yhat_` - mean(`_yhat_`)) %>% # center cp profiles
+    ungroup() %>%
+    # compute mean and sd of centered cp profiles for each fold and value of the variable of interest
+    group_by(cv_type, fold, across(all_of(var_name))) %>%
+    summarise(
+      yhat_loc = mean(`_yhat_`), # compute mean of profiles
+      yhat_spr = sd(yhat_cent), # compute sd of cp profiles
+      .groups = "keep"
+    ) %>%
+    ungroup() %>% 
+    setNames(c("cv_type", "fold", "x", "yhat_loc", "yhat_spr"))
+  
+  ## Interpolate yhat values and spread on a common x distribution (step 2)
+  # Regularise across folds: need a common x distribution, and interpolate y on this new x
+  new_x <- quantile(d_pdp$x, probs = seq(0, 1, 0.01), names = FALSE)
+  # x is different within each fold, so interpolation is performed on each fold
+  
+  int_pdp <- lapply(1:length(folds), function(i){
+    # Get data corresponding to this fold
+    fold_name <- folds[i]
+    this_fold <- d_pdp %>% filter(fold == fold_name)
+    
+    # Extract original x values
+    x <- this_fold$x
+    # Extract values to interpolate (yhat_loc and yhat_spr)
+    yhat_loc <- this_fold$yhat_loc
+    yhat_spr <- this_fold$yhat_spr
+    # Interpolate yhat_loc and yhat_spr on new x values
+    int <- tibble(
+      new_x = new_x,
+      yhat_loc = castr::interpolate(x = x, y = yhat_loc, xout = new_x),
+      yhat_spr = castr::interpolate(x = x, y = yhat_spr, xout = new_x),
+    ) %>% 
+      rename(x = new_x) %>% 
+      mutate(
+        cv_type = cv_type_name,
+        fold = fold_name,
+        var_name = var_name,
+        .before = x
+        )
+    # Return the result
+    return(int)
+    
+  }) %>% 
+    bind_rows()
+  
+  ## Across fold, compute the weighted mean, using 1/var as weights (step 3)
+  mean_pdp <- int_pdp %>% 
+    group_by(cv_type, var_name, x) %>% 
+    summarise(
+      yhat_loc = wtd.mean(yhat_loc, weights = 1/(yhat_spr)^2),
+      yhat_spr = wtd.mean(yhat_spr, weights = 1/(yhat_spr)^2),
+      .groups = "drop"
+    ) %>% 
+    arrange(x)
+  
+  # Return the result
+  return(mean_pdp)
+}) %>% 
+  bind_rows()
+
+# Arrange in order of most important variables
+mean_pdp <- vars_pdp %>% 
+  rename(var_name = variable) %>% 
+  left_join(mean_pdp, by = join_by(cv_type, var_name)) %>% 
+  mutate(var_name = fct_inorder(var_name)) %>% 
+  select(-dropout_loss)
+
+# Plot it!
+ggplot(mean_pdp) + 
+  geom_path(aes(x = x, y = yhat_loc, colour = cv_type), show.legend = FALSE) +
+  geom_ribbon(aes(x = x, ymin = yhat_loc - yhat_spr, ymax = yhat_loc + yhat_spr, fill = cv_type), alpha = 0.2, show.legend = FALSE) +
+  facet_grid(cv_type~var_name, scales = "free") +
+  labs(y = "Predicted log(POC flux)") +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    axis.title.x = element_blank(), 
+  )
+```
