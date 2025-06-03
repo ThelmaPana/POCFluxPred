@@ -1,0 +1,104 @@
+---
+title: "Master report for POC prediction experiments"
+author: "Thelma Panaïotis"
+format:
+  html:
+    toc: true
+    embed-resources: true
+    lightbox: true
+editor: visual
+editor_options: 
+  chunk_output_type: console
+cache: true
+---
+
+
+```{r setup}
+#| output: false
+#| cache: false
+source(here::here("utils.R"))
+```
+
+## Read experiment results
+
+```{r read experiments}
+# List experiment directories
+experiment_dirs <- dir_ls("experiments", type = "directory", regexp = "^experiments/exp_[0-9]+$")
+
+# Function to read a config file
+read_config <- function(dir) {
+  path <- path(dir, "config.yaml")
+  if (file_exists(path)) {
+    yaml::read_yaml(path)
+  } else {
+    list()
+  }
+}
+
+# Function to read results of an experiment
+read_metrics <- function(dir) {
+  file <- path(dir, "results", "res_xgb.rds")
+  if (file_exists(file)) {
+    readRDS(file) %>%
+      mutate(experiment = path_file(dir))
+  } else {
+    tibble()
+  }
+}
+
+# Read everything
+all_configs <- map(experiment_dirs, read_config)
+all_results <- map_dfr(experiment_dirs, read_metrics)
+```
+
+## Summary of tested configurations
+
+```{r summarise_config}
+tibble::tibble(
+  experiment = map_chr(experiment_dirs, path_file),
+  description = map_chr(all_configs, ~ .x$description %||% "NA"),
+  predictors = map_chr(all_configs, ~ paste(.x$exp_vars %||% "NA", collapse = ", "))
+) %>%
+  knitr::kable()
+
+```
+
+## Performance comparison
+
+```{r compute perf}
+# Extract predictions
+all_preds <- all_results %>% 
+  select(experiment, cv_type, fold, preds) %>% 
+  unnest(preds) %>% 
+  mutate(resid = .pred - log_poc_flux)
+
+# Compute Rsquare for each fold
+all_perf <- all_preds %>%
+  group_by(experiment, cv_type, fold) %>%
+    summarise(
+    rsq = rsq_vec(log_poc_flux, .pred),
+    rmse = rmse_vec(log_poc_flux, .pred),
+    .groups = "drop"
+  )
+```
+
+Plot R² for all experiments.
+
+```{r plot_r2}
+# Plot Rsquares
+ggplot(all_perf) +
+  geom_boxplot(aes(x = cv_type, y = rsq, colour = experiment)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "CV type", y = "R²", colour = "Experiment") +
+  theme_classic()
+```
+
+Plot RMSE for all experiments.
+
+```{r plot_rmse}
+# Plot RMSE
+ggplot(all_perf) +
+  geom_boxplot(aes(x = cv_type, y = rmse, colour = experiment)) +
+  labs(x = "CV type", y = "RMSE", colour = "Experiment") +
+  theme_classic()
+```
