@@ -5,8 +5,7 @@
 # Author: Thelma Panaïotis
 #--------------------------------------------------------------------------#
 
-library(fs)
-library(glue)
+source(here::here("utils.R"))
 
 # List directory of experiments, excluding the demo experiment
 experiment_dirs <- dir_ls("experiments", type = "directory", regexp = "^experiments/exp_[0-9]+$")

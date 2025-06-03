@@ -1,0 +1,11 @@
+description: "Predict POC flux from trap depth and POC profile properties and environmental data reduced to 5 PCs."
+dataset: data/03.df_all_pca.csv
+resp_var: ["log_poc_flux", "poc_flux"]
+meta_vars: ["id", "lon", "lat"]
+exp_vars: ["depth_trap", "att", "poc_max", "depth_poc_max", "PC1", "PC2", "PC3", "PC4", "PC5"]
+nested_cv:
+  n_outer_folds: 3
+  n_inner_folds: 3
+  n_breaks_strat: 9
+grid_size: 3
+seed: 123

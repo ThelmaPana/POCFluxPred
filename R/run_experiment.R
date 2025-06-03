@@ -5,10 +5,7 @@
 # Author: Thelma Panaïotis
 #--------------------------------------------------------------------------#
 
-library(tidyverse)
-#library(sf)
-library(yaml)
-library(tidymodels)
+source(here::here("utils.R"))
 
 run_experiment <- function(config_path) {
   

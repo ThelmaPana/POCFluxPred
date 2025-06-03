@@ -20,7 +20,6 @@ config_dir <- dirname(config_path)
 config <- yaml::read_yaml(config_path)
 ```
 
-
 ::: callout-note
 ## Experiment details
 
@@ -37,7 +36,6 @@ config <- yaml::read_yaml(config_path)
     -   inner: `r config$nested_cv$n_inner_folds`
 
 -   Grid size: `r config$grid_size`
-
 :::
 
 ## Read predictions
