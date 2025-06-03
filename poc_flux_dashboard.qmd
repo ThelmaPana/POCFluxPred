@@ -1,0 +1,85 @@
+---
+title: "POC flux dataset"
+author: "Thelma Panaïotis"
+format: 
+  dashboard:
+    scrolling: false
+    orientation: columns
+    embed-resources: true
+editor: visual
+---
+
+```{r load}
+source("utils.R")
+load("data/00.df_poc_flux.Rdata")
+```
+
+# Sampling
+
+## Column {width="50%"}
+
+```{r depth_map}
+ggplot(df_flux) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = depth_trap)) +
+  scale_colour_cmocean(name = "deep") +
+  guides(colour = guide_colorbar(reverse = TRUE)) +
+  labs(x = "Longitude", y = "Latitude", colour = "Trap\ndepth\n(m)") +
+  coord_quickmap(expand = 0)
+```
+
+## Column {width="50%"}
+
+```{r depth_hist}
+ggplot(df_flux) +
+  geom_histogram(aes(x = depth_trap), binwidth = 50) +
+  coord_flip() +
+  scale_x_continuous(expand = c(0,0), transform = "reverse") +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(x = "Trap depth (m)", y = "Count") +
+  theme_classic()
+```
+
+```{r lat_hist}
+ggplot(df_flux) +
+  geom_histogram(aes(x = lat), binwidth = 2) +
+  coord_flip() +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(x = "Latitude", y = "Count") +
+  theme_classic()
+```
+
+# POC flux
+
+## Column {width="50%"}
+
+```{r poc_flux_map}
+ggplot(df_flux) +
+  geom_polygon(data = world, aes(x = lon, y = lat, group = group), fill = "grey") +
+  geom_point(aes(x = lon, y = lat, colour = poc_flux)) +
+  scale_colour_cmocean(name = "matter", trans = "log1p") +
+  labs(x = "Longitude", y = "Latitude", colour = "POC flux<br>(mg C m<sup>-2</sup> d<sup>-1</sup>)") +
+  coord_quickmap(expand = 0) +
+  theme(legend.title = element_markdown())
+```
+
+## Column {width="50%"}
+
+```{r poc_flux_hist}
+ggplot(df_flux) +
+  geom_histogram(aes(x = poc_flux), bins = 100) +
+  scale_x_log10() +
+  labs(x = "POC flux (mg C m<sup>-2</sup> d<sup>-1</sup>)", y = "Count") +
+  theme_classic() +
+  theme(axis.title.x = element_markdown())
+```
+
+```{r poc_flux_vs_depth}
+ggplot(df_flux) +
+  geom_point(aes(x = poc_flux, y = -depth_trap), size = 0.5) +
+  scale_x_log10() +
+  labs(x = "POC flux (mg C m<sup>-2</sup> d<sup>-1</sup>)", y = "Trap depth") +
+  theme_classic() +
+  theme(axis.title.x = element_markdown())
+```
