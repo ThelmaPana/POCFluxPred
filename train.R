@@ -1,6 +1,6 @@
 #--------------------------------------------------------------------------#
 # Project: POCFluxPred
-# Script purpose: Train a model
+# Script purpose: Train a model given a configuration file
 # Date: 02/06/2025
 # Author: Thelma Panaïotis
 #--------------------------------------------------------------------------#
