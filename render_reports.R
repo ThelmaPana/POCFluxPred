@@ -13,9 +13,11 @@ experiment_dirs <- dir_ls("experiments", type = "directory", regexp = "^experime
 
 # Loop over experiments and generate reports
 for (dir in experiment_dirs) {
+  
+  cat("Generating report for", path_file(dir), "\n")
+  
   # Copy quarto report to target directory
   file_copy("R/report_experiment.qmd", path(dir, "report_experiment.qmd"), overwrite = TRUE)  
-  
   
   cmd <- glue(
     "quarto render report_experiment.qmd ",
