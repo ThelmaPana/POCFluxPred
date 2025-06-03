@@ -8,11 +8,13 @@
 library(fs)
 library(glue)
 
-experiment_dirs <- dir_ls("experiments", type = "directory")
+# List directory of experiments, excluding the demo experiment
+experiment_dirs <- dir_ls("experiments", type = "directory", regexp = "^experiments/exp_[0-9]+$")
 
+# Loop over experiments and generate reports
 for (dir in experiment_dirs) {
   # Copy quarto report to target directory
-  file_copy("report_experiment.qmd", path(dir, "report_experiment.qmd"))  
+  file_copy("R/report_experiment.qmd", path(dir, "report_experiment.qmd"), overwrite = TRUE)  
   
   
   cmd <- glue(
@@ -28,8 +30,9 @@ for (dir in experiment_dirs) {
   system(cmd)
   setwd(old)
   
-  cat("✅ Rendered report for", exp_name, "\n")
+  cat("Rendered report for", path_file(dir), "\n")
   
   # Remove copied quarto report
   file_delete(path(dir, "report_experiment.qmd"))
 }
+

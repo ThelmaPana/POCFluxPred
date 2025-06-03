@@ -4,6 +4,7 @@ author: "Thelma Panaïotis"
 format: 
   html:
     embed-resources: true
+    lightbox: true
 editor: visual
 params:
   config_path: null
@@ -18,6 +19,26 @@ config_path <- params$config_path
 config_dir <- dirname(config_path)
 config <- yaml::read_yaml(config_path)
 ```
+
+
+::: callout-note
+## Experiment details
+
+-   Description: `r config$description`
+
+-   Dataset: `r config$dataset`
+
+-   Predictors: `r config$exp_vars`
+
+-   Nested CV folds
+
+    -   outer: `r config$nested_cv$n_outer_folds`
+
+    -   inner: `r config$nested_cv$n_inner_folds`
+
+-   Grid size: `r config$grid_size`
+
+:::
 
 ## Read predictions
 
