@@ -8,7 +8,7 @@ format:
 editor: visual
 params:
   config_path: null
-cache: false
+cache: true
 ---
 
 ```{r set_up}

@@ -27,6 +27,8 @@ library(R.matlab)
 library(fs)
 library(yaml)
 library(glue)
+library(knitr)
+library(optparse)
 
 ## Settings ----
 #--------------------------------------------------------------------------#
