@@ -9,7 +9,9 @@ format:
 editor: visual
 editor_options: 
   chunk_output_type: console
-cache: false
+cache: true
+params:
+  included_experiments: null
 ---
 
 ```{r setup}
@@ -21,12 +23,11 @@ source(here::here("utils.R"))
 ## Read experiment results
 
 ```{r read experiments}
+
+# Experiments to include
+included_exps <- strsplit(params$included_experiments, ",")[[1]]
 # List experiment directories
-experiment_dirs <- dir_ls(
-  here::here("experiments"),
-  type = "directory", 
-  regexp = "exp_[0-9]+$"
-)
+experiment_dirs <- here::here(file.path("experiments", included_exps))
 
 # Function to read a config file
 read_config <- function(dir) {
@@ -57,12 +58,12 @@ all_results <- map_dfr(experiment_dirs, read_metrics)
 ## Summary of tested configurations
 
 ```{r summarise_config}
-tibble::tibble(
+tibble(
   experiment = map_chr(experiment_dirs, path_file),
   description = map_chr(all_configs, ~ .x$description %||% "NA"),
   predictors = map_chr(all_configs, ~ paste(.x$exp_vars %||% "NA", collapse = ", "))
 ) %>%
-  knitr::kable()
+  kable()
 ```
 
 ## Performance comparison
