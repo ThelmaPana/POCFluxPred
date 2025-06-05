@@ -78,7 +78,7 @@ if (opts$refresh) {
 }
 
 
-## Execute quarto commend ----
+## Execute quarto command ----
 #--------------------------------------------------------------------------#
 system2("quarto", args)
 
