@@ -62,3 +62,12 @@ models/
 *_files
 
 /.quarto/
+
+# Presentations
+presentations/
+
+# Old stuff
+old/
+data_old/
+trainings/
+plots.R
