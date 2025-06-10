@@ -1,0 +1,12 @@
+description: "Predict POC flux from trap depth, poc profile properties and all environmental conditions."
+dataset: data/03.df_all.csv
+resp_var: ["log_poc_flux", "poc_flux"]
+meta_vars: ["id", "lon", "lat"]
+exp_vars: ["depth_trap", "att", "poc_max", "depth_poc_max", "temperature.surf", "temperature.epi", "temperature.meso", "temperature.bathy", "salinity.surf", "salinity.epi", "salinity.meso", "salinity.bathy", "density.surf", "density.epi", "density.meso", "density.bathy", "oxygen.surf", "oxygen.epi", "oxygen.meso", "oxygen.bathy", "aou.surf", "aou.epi", "aou.meso", "aou.bathy", "silicate.surf", "silicate.epi", "silicate.meso", "phosphate.surf", "phosphate.epi", "phosphate.meso", "nitrate.surf", "nitrate.epi", "nitrate.meso", "bbp", "npp", "fmicro", "log_chl", "z_eu", "pic", "poc", "psd", "mld", "thermo", "pycno", "n_cline", "p_cline", "s_cline", "par"]
+nested_cv:
+  n_outer_folds: 10
+  n_inner_folds: 10
+  n_breaks_strat: 9
+grid_size: 30
+seed: 123
+
