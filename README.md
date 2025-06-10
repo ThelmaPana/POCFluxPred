@@ -50,4 +50,22 @@ Four notebooks are present for data preparation:
 
 -   `03.assemble_dataset`: to assemble the final dataset
 
-Before starting, restore your R environment with `renv::restore()`
+Other scripts include (see below for more details):
+
+-   `render_master_reports.R`: to render the report comparing all experiments
+
+-   `render_reports.R`: to render the report for a given experiment
+
+-   `train.R`: to run an experiment
+
+-   `utils.R`: contains utilities
+
+There is also a quarto dashboard (`poc_flux_dashboard`) to explore the POC  flux dataset.
+
+## Running experiments
+
+1.  Before starting, restore your R environment with `renv::restore()`
+2.  Set-up a new experiment using the template in `experiments/exp_new`: fill in description, predictors… in `config.yaml`
+3.  From a terminal, call `Rscript train.R --experiments/exp_XX/config.yaml`
+4.  Once training is done, generate report for the experiment by running `Rscript render_reports.R` (see help for options)
+5.  Once all experiments are done, call `Rscript render_master_reports.R` to generate a master report of all your experiments
