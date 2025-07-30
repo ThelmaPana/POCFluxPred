@@ -52,7 +52,16 @@ rsconnect/
 draft*
 
 # Data
-data/
+# Ignore everything in data/
+data/**
+
+# Don't ignore these specific files
+!data/raw/gshhg_world_c.csv
+!data/raw/clim4cael.mat
+!data/raw/picpoc.mat
+!data/raw/PSD_slope.mat
+!data/raw/modis/
+!data/raw/modis/**
 
 # Models
 models/
